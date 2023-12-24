@@ -295,12 +295,12 @@ specific keybindings; namely:
   :global nil
   :keymap (let ((map (make-sparse-keymap)))
             map)
-  (cond
-   (org-transclusion-mode
-    (org-transclusion-activate)
-    (when org-transclusion-add-all-on-activate
-      (org-transclusion-add-all)))
-   (t (org-transclusion-deactivate))))
+  (if org-transclusion-mode
+      (progn
+        (org-transclusion-activate)
+        (when org-transclusion-add-all-on-activate
+          (org-transclusion-add-all)))
+    (org-transclusion-deactivate)))
 
 ;;;###autoload
 (defun org-transclusion-activate ()
@@ -354,15 +354,13 @@ so on) or `universal-argument' (\\[universal-argument]).
 If you pass a positive number 1-9 with `digit-argument', this
 function automatically puts the :level property to the resultant
 transclusion keyword."
-
   (interactive "P")
   (let* ((context (org-element-lineage
-                   (org-element-context)'(link) t))
+                   (org-element-context) '(link) t))
          (type (org-element-property :type context))
-         (auto-transclude-p (if (or (not arg) (numberp arg)) org-transclusion-mode
-                              ;; if `universal-argument' is passed,
-                              ;; reverse nil/t when
-                              (if org-transclusion-mode nil t))))
+         (auto-transclude-p (if (consp arg)
+                                (not org-transclusion-mode)
+                              org-transclusion-mode)))
     (when (or (string= type "file")
               (string= type "id"))
       (let* ((contents-beg (org-element-property :contents-begin context))
@@ -470,21 +468,20 @@ function to work only on the narrowed region you are in, leaving
 the rest of the buffer unchanged."
   (interactive "P")
   (save-restriction
-    (let ((marker (move-marker (make-marker) (point))))
+    (let ((marker (point-marker)))
       (unless narrowed (widen))
       (goto-char (point-min))
-      (let ((regexp "^[ \t]*#\\+TRANSCLUDE:"))
-        (while (re-search-forward regexp nil t)
-          ;; Don't transclude if within a transclusion to avoid infinite
-          ;; recursion
-          (unless (or (org-transclusion-within-transclusion-p)
-                      (plist-get (org-transclusion-keyword-string-to-plist)
-                                 :disable-auto))
-            ;; Demoted-errors so that one error does not stop the whole process
-            (with-demoted-errors
-                "Not transcluded. Continue to next: %S"
-              (when (org-transclusion-add)
-                (message (format "Transcluded at point %d, line %d" (point) (org-current-line))))))))
+      (while (re-search-forward "^[ \t]*#\\+TRANSCLUDE:" nil t)
+        ;; Don't transclude if within a transclusion to avoid infinite
+        ;; recursion
+        (unless (or (org-transclusion-within-transclusion-p)
+                    (plist-get (org-transclusion-keyword-string-to-plist)
+                               :disable-auto))
+          ;; Demoted-errors so that one error does not stop the whole process
+          (with-demoted-errors
+              "Not transcluded. Continue to next: %S"
+            (when (org-transclusion-add)
+              (message (format "Transcluded at point %d, line %d" (point) (org-current-line)))))))
       (goto-char marker)
       (move-marker marker nil) ; point nowhere for GC
       t)))
@@ -502,35 +499,34 @@ When success, return the beginning point of the keyword re-inserted."
             (indent (plist-get keyword-plist :current-indentation))
             (keyword (org-transclusion-keyword-plist-to-string keyword-plist))
             (tc-pair-ov (get-char-property (point) 'org-transclusion-pair)))
-      (progn
-        ;; Need to retain the markers of the other adjacent transclusions
-        ;; if any.  If their positions differ after insert, move them back
-        ;; beg or end
-        (let ((mkr-at-beg
-               ;; Check the points to look at exist in buffer.  Then look for
-               ;; adjacent transclusions' markers if any.
-               (when (>= (1- beg)(point-min))
-                 (get-text-property (1- beg) 'org-transclusion-end-mkr))))
-          ;; If within live-sync, exit.  It's not absolutely
-          ;; required. delete-region below will evaporate the live-sync
-          ;; overlay, and text-clone's post-command correctly handles the
-          ;; overlay on the source.
-          (when (org-transclusion-within-live-sync-p)
-            (org-transclusion-live-sync-exit))
-          (delete-overlay tc-pair-ov)
-          (org-transclusion-with-inhibit-read-only
-            (save-excursion
-              (delete-region beg end)
-              (when (> indent 0) (indent-to indent))
-              (insert-before-markers keyword))
-            ;; Move markers of adjacent transclusions if any to their original
-            ;; potisions.  Some markers move if two transclusions are placed
-            ;; without any blank lines, and either of beg and end markers will
-            ;; inevitably have the same position (location "between" lines)
-            (when mkr-at-beg (move-marker mkr-at-beg beg))
-            ;; Go back to the beginning of the inserted keyword line
-            (goto-char beg))
-          (move-marker (make-marker) beg)))
+      ;; Need to retain the markers of the other adjacent transclusions
+      ;; if any.  If their positions differ after insert, move them back
+      ;; beg or end
+      (let ((mkr-at-beg
+             ;; Check the points to look at exist in buffer.  Then look for
+             ;; adjacent transclusions' markers if any.
+             (when (>= (1- beg)(point-min))
+               (get-text-property (1- beg) 'org-transclusion-end-mkr))))
+        ;; If within live-sync, exit.  It's not absolutely
+        ;; required. delete-region below will evaporate the live-sync
+        ;; overlay, and text-clone's post-command correctly handles the
+        ;; overlay on the source.
+        (when (org-transclusion-within-live-sync-p)
+          (org-transclusion-live-sync-exit))
+        (delete-overlay tc-pair-ov)
+        (org-transclusion-with-inhibit-read-only
+          (save-excursion
+            (delete-region beg end)
+            (when (> indent 0) (indent-to indent))
+            (insert-before-markers keyword))
+          ;; Move markers of adjacent transclusions if any to their original
+          ;; potisions.  Some markers move if two transclusions are placed
+          ;; without any blank lines, and either of beg and end markers will
+          ;; inevitably have the same position (location "between" lines)
+          (when mkr-at-beg (move-marker mkr-at-beg beg))
+          ;; Go back to the beginning of the inserted keyword line
+          (goto-char beg))
+        (move-marker (make-marker) beg))
     (message "Nothing done. No transclusion exists here.") nil))
 
 (defun org-transclusion-detach ()
