@@ -1877,20 +1877,6 @@ FORCE will let this function ignore
           (error (message "Problems while trying to load feature `%s'" ext)))))
     (setq org-transclusion-extensions-loaded t)))
 
-(defun org-transclusion-extension-set-a-hook-functions (add-or-remove list)
-  "Add/remove functions to an abnormal hook.
-LIST must be a cons cell for an extension. CAR is a symbol name
-of an abnormal hook \(generally suffixed with \"-functions\"\).
-CDR is either a symbol or list of symbols, which are names of
-functions to be set to the abnormal hook. ADD-OR-REMOVE must either
-`add-hook' or `remove-hook'."
-  (let* ((hook-name (car list))
-         (symbols (cdr list))
-         ;; If CDR is a single function symbol name, put it into a list.
-         (symbols (if (listp symbols) symbols (list symbols))))
-    (mapc (lambda (symbol) (funcall add-or-remove hook-name symbol))
-          symbols)))
-
 (defun org-transclusion-extension-functions-add-or-remove (extension-functions &optional remove)
   "Add or remove functions to abnormal hooks for extensions.
 EXTENSION-FUNCTIONS is an alist. CAR of each cons cell is a
@@ -1899,11 +1885,11 @@ symbol name of an abnormal hook \(generally suffixed with
 which are names of functions to be set to the abnormal hook. If
 REMOVE is non-nil, the functions will be removed from the
 abnormal hooks; otherwise, added to them."
-  (let* ((add-or-remove (if remove #'remove-hook #'add-hook))
-         (set-function (apply-partially
-                        #'org-transclusion-extension-set-a-hook-functions
-                        add-or-remove)))
-    (mapc set-function extension-functions)))
+  (cl-loop for (hook-name . symbols) in extension-functions
+           do (mapc (lambda (symbol)
+                      (funcall (if remove #'remove-hook #'add-hook)
+                               hook-name symbol))
+                    (ensure-list symbols))))
 
 ;; Load extensions upon loading this file
 (org-transclusion-load-extensions-maybe)
